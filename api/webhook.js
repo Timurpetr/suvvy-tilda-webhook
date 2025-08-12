@@ -1,91 +1,75 @@
-// Файл: api/webhook.js
 import fetch from 'node-fetch';
 
+// Для отслеживания дубликатов
+const processedMessages = new Set();
+
 export default async function handler(req, res) {
-  console.log('\n===== NEW REQUEST RECEIVED =====');
-  console.log(`[${new Date().toISOString()}] Method: ${req.method}`);
-  console.log('Headers:', JSON.stringify(req.headers, null, 2));
-  console.log('Raw request body:', JSON.stringify(req.body, null, 2));
+  // Настройка CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Request-ID');
   
-  // Разрешаем только POST-запросы
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed' });
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
   }
 
-  // Проверка наличия токена
+  // Логирование
+  console.log('\n===== NEW REQUEST =====');
+  console.log('Method:', req.method);
+  console.log('Headers:', JSON.stringify(req.headers));
+  console.log('Body:', JSON.stringify(req.body));
+
+  // Проверка токена
   const SUVVY_API_TOKEN = process.env.SUVVY_API_TOKEN;
   if (!SUVVY_API_TOKEN) {
-    console.error('Critical Error: SUVVY_API_TOKEN is not set');
     return res.status(500).json({ error: 'Server configuration error' });
   }
 
-  // Проверка тела запроса
-  if (!req.body) {
-    return res.status(400).json({ error: 'Empty request body' });
-  }
-
   try {
-    // Обработка ТЕСТОВОГО запроса от Suvvy
+    // Проверка на дубликат по X-Request-ID
+    const requestId = req.headers['x-request-id'];
+    if (requestId && processedMessages.has(requestId)) {
+      console.log('Duplicate request detected, skipping');
+      return res.status(200).json({ success: true, message: 'Duplicate ignored' });
+    }
+    
+    if (requestId) {
+      processedMessages.add(requestId);
+      // Очистка старых ID (чтобы не накапливались)
+      if (processedMessages.size > 1000) {
+        const oldest = Array.from(processedMessages).slice(0, 100);
+        oldest.forEach(id => processedMessages.delete(id));
+      }
+    }
+
+    // Обработка тестового запроса
     if (req.body.event_type === 'test_request') {
-      console.log('Received test request from Suvvy');
-      return res.status(200).json({ 
-        success: true,
-        message: 'Test webhook received' 
-      });
+      return res.status(200).json({ success: true });
     }
 
-    let messageText = '';
-    let userId = '';
-    let clientName = '';
-    let clientPhone = '';
+    // Извлечение данных
+    const messageText = req.body.text || '';
+    const userId = req.body.user_id || 'unknown-user';
+    const messageId = req.body.message_id || `tilda-${Date.now()}`;
 
-    // Определение формата данных (чат Tilda или форма Tilda)
-    if (req.body.message && req.body.message.text) {
-      // Формат для чата Tilda
-      messageText = req.body.message.text;
-      userId = req.body.user?.id || 'chat-user-' + Date.now();
-      clientName = req.body.client_name || 'Chat User';
-    } else if (req.body.Form) {
-      // Формат для формы Tilda
-      const formData = req.body.Form;
-      messageText = Object.entries(formData.fields)
-        .map(([key, value]) => `${key}: ${value.value}`)
-        .join('\n');
-      
-      userId = 'form-user-' + Date.now();
-      clientName = formData.name || 'Form User';
-      clientPhone = formData.phone || '';
-    } else {
-      // Попытка извлечь данные из других форматов
-      messageText = req.body.text || req.body.message || JSON.stringify(req.body);
-      userId = req.body.user_id || 'unknown-user-' + Date.now();
-      clientName = req.body.client_name || 'Unknown User';
-      clientPhone = req.body.client_phone || '';
-    }
-
-    // Проверка текста сообщения
-    if (!messageText || !messageText.trim()) {
-      console.error('Validation Error: Missing message text');
+    if (!messageText.trim()) {
       return res.status(400).json({ error: 'Message text is required' });
     }
 
-    // Формируем payload для Suvvy
+    // Формирование payload для Suvvy
     const payload = {
       api_version: 1,
-      message_id: `tilda-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
+      message_id: messageId,
       chat_id: userId,
       text: messageText,
-      source: "Tilda",
-      message_sender: "customer",
-      ...(clientName && { client_name: clientName }),
-      ...(clientPhone && { client_phone: clientPhone })
+      source: "Tilda Chat",
+      message_sender: "customer"
     };
 
-    console.log('Prepared payload for Suvvy:', JSON.stringify(payload, null, 2));
+    console.log('Sending to Suvvy:', JSON.stringify(payload));
 
-    // Отправляем в Suvvy
-    const SUVVY_WEBHOOK_URL = 'https://api.suvvy.ai/api/webhook/custom/message';
-    const suvvyResponse = await fetch(SUVVY_WEBHOOK_URL, {
+    // Отправка в Suvvy
+    const suvvyResponse = await fetch('https://api.suvvy.ai/api/webhook/custom/message', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -95,21 +79,16 @@ export default async function handler(req, res) {
       timeout: 10000
     });
 
-    // Обработка ответа
-    const responseBody = await suvvyResponse.text();
-    console.log(`Suvvy response: ${suvvyResponse.status} ${responseBody}`);
-    
-    if (!suvvyResponse.ok) {
-      return res.status(suvvyResponse.status).json({
-        error: 'Suvvy API error',
-        details: responseBody
-      });
-    }
+    const responseText = await suvvyResponse.text();
+    console.log(`Suvvy response: ${suvvyResponse.status} ${responseText}`);
 
-    return res.status(200).json({ success: true });
+    return res.status(200).json({ 
+      success: suvvyResponse.ok,
+      message: suvvyResponse.ok ? 'Successful' : 'Forwarding failed'
+    });
 
   } catch (error) {
-    console.error('Unhandled Exception:', error);
+    console.error('Handler error:', error);
     return res.status(500).json({
       error: 'Internal Server Error',
       message: error.message
