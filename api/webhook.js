@@ -1,8 +1,5 @@
 import fetch from 'node-fetch';
 
-// Для обработки входящих сообщений от бота
-const botMessageQueue = new Map();
-
 export default async function handler(req, res) {
   // Настройка CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -13,16 +10,30 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  // Логирование
   console.log('\n===== NEW REQUEST =====');
   console.log('Method:', req.method);
   console.log('Headers:', JSON.stringify(req.headers));
   console.log('Body:', JSON.stringify(req.body));
 
   try {
-    // 1. Обработка сообщений ОТ ПОЛЬЗОВАТЕЛЯ (из Tilda)
-    if (req.body && req.body.text) {
-      console.log('Processing USER message');
+    // 1. Обработка тестовых запросов от Suvvy
+    if (req.body.event_type === 'test_request') {
+      console.log('Processing test request');
+      return res.status(200).json({ success: true });
+    }
+    
+    // 2. Обработка сообщений от бота Suvvy
+    if (req.body.event_type === 'new_messages') {
+      console.log('Processing bot message from Suvvy');
+      return res.status(200).json({ 
+        success: true,
+        message: 'Bot message received'
+      });
+    }
+    
+    // 3. Обработка сообщений от пользователя Tilda
+    if (req.body && (req.body.text || req.body.message)) {
+      console.log('Processing user message from Tilda');
       
       // Проверка токена
       const SUVVY_API_TOKEN = process.env.SUVVY_API_TOKEN;
@@ -32,7 +43,7 @@ export default async function handler(req, res) {
 
       // Извлечение данных
       const userId = req.headers['x-user-id'] || 'unknown-user';
-      const messageText = req.body.text;
+      const messageText = req.body.text || req.body.message?.text || '';
       const messageId = req.body.message_id || `tilda-${Date.now()}`;
 
       if (!messageText.trim()) {
@@ -70,36 +81,11 @@ export default async function handler(req, res) {
         message: 'Message forwarded to Suvvy'
       });
     }
-    // 2. Обработка сообщений ОТ БОТА (из Suvvy)
-    else if (req.body && req.body.event_type === 'new_messages') {
-      console.log('Processing BOT message from Suvvy');
-      
-      const { chat_id, new_messages } = req.body;
-      
-      if (!chat_id || !new_messages || !Array.isArray(new_messages)) {
-        return res.status(400).json({ error: 'Invalid bot message format' });
-      }
-
-      // Здесь должна быть логика отправки сообщения пользователю
-      // В реальной системе это бы делалось через WebSockets или другую систему
-      console.log(`Bot message for ${chat_id}:`, new_messages.map(m => m.text).join(', '));
-      
-      // Вместо реальной отправки просто подтверждаем получение
-      return res.status(200).json({ 
-        success: true,
-        message: 'Bot message received'
-      });
-    }
-    // 3. Обработка тестовых запросов
-    else if (req.body && req.body.event_type === 'test_request') {
-      console.log('Processing TEST request');
-      return res.status(200).json({ success: true });
-    }
-    // 4. Неизвестный формат запроса
-    else {
-      console.log('Unknown request format');
-      return res.status(400).json({ error: 'Unsupported request format' });
-    }
+    
+    // 4. Обработка других форматов
+    console.log('Unsupported request format');
+    return res.status(400).json({ error: 'Unsupported request format' });
+    
   } catch (error) {
     console.error('Handler error:', error);
     return res.status(500).json({
