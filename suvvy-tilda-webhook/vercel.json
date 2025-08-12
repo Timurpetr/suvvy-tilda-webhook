@@ -1,9 +1,0 @@
-{
-  "routes": [
-    {
-      "src": "/api/tilda-webhook",
-      "methods": ["POST"],
-      "dest": "/api/tilda-webhook.js"
-    }
-  ]
-}
