@@ -34,14 +34,34 @@ export default async function handler(req, res) {
       });
     }
 
-    // Обработка РЕАЛЬНОГО запроса от Tilda
-    const { 
-      text: messageText, 
-      user_id: userId, 
-      client_name, 
-      client_phone,
-      attachments = []
-    } = req.body;
+    let messageText = '';
+    let userId = '';
+    let clientName = '';
+    let clientPhone = '';
+
+    // Определение формата данных (чат Tilda или форма Tilda)
+    if (req.body.message && req.body.message.text) {
+      // Формат для чата Tilda
+      messageText = req.body.message.text;
+      userId = req.body.user?.id || 'chat-user-' + Date.now();
+      clientName = req.body.client_name || 'Chat User';
+    } else if (req.body.Form) {
+      // Формат для формы Tilda
+      const formData = req.body.Form;
+      messageText = Object.entries(formData.fields)
+        .map(([key, value]) => `${key}: ${value.value}`)
+        .join('\n');
+      
+      userId = 'form-user-' + Date.now();
+      clientName = formData.name || 'Form User';
+      clientPhone = formData.phone || '';
+    } else {
+      // Попытка извлечь данные из других форматов
+      messageText = req.body.text || req.body.message || JSON.stringify(req.body);
+      userId = req.body.user_id || 'unknown-user-' + Date.now();
+      clientName = req.body.client_name || 'Unknown User';
+      clientPhone = req.body.client_phone || '';
+    }
 
     // Проверка текста сообщения
     if (!messageText || !messageText.trim()) {
@@ -53,13 +73,12 @@ export default async function handler(req, res) {
     const payload = {
       api_version: 1,
       message_id: `tilda-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
-      chat_id: userId || 'tilda-user-' + Date.now(),
+      chat_id: userId,
       text: messageText,
-      source: "Tilda Chat",
+      source: "Tilda",
       message_sender: "customer",
-      ...(client_name && { client_name }),
-      ...(client_phone && { client_phone }),
-      ...(attachments.length > 0 && { attachments })
+      ...(clientName && { client_name: clientName }),
+      ...(clientPhone && { client_phone: clientPhone })
     };
 
     console.log('Prepared payload for Suvvy:', JSON.stringify(payload, null, 2));
