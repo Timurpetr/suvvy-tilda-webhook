@@ -6,12 +6,10 @@ export default async function handler(req, res) {
     return res.status(405).send('Method Not Allowed');
   }
 
-  // Получаем данные из нашего чата на Tilda
   const { message, user } = req.body;
 
-  // Токен вашего бота из Suvvy.ai (добавьте в переменные окружения!)
   const SUVVY_API_TOKEN = process.env.SUVVY_API_TOKEN;
-  const SUVVY_API_URL = 'https://api.suvvy.ai/v1/chat/completions'; // Пример URL, уточните в документации
+  const SUVVY_API_URL = 'https://api.suvvy.ai/api/webhook/custom/message'; 
 
   if (!SUVVY_API_TOKEN) {
     return res.status(500).json({ error: 'Server configuration error: SUVVY_API_TOKEN is not set' });
