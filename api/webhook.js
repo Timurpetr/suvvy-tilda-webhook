@@ -2,19 +2,13 @@
 import fetch from 'node-fetch';
 
 export default async function handler(req, res) {
-  // Начало обработки запроса
   console.log('\n===== NEW REQUEST RECEIVED =====');
   console.log(`[${new Date().toISOString()}] Method: ${req.method}`);
-  
-  // Логируем заголовки
   console.log('Headers:', JSON.stringify(req.headers, null, 2));
-  
-  // Логируем тело запроса
   console.log('Raw request body:', JSON.stringify(req.body, null, 2));
   
-  // Проверка метода
+  // Разрешаем только POST-запросы
   if (req.method !== 'POST') {
-    console.error('Error: Method not allowed');
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
@@ -27,25 +21,30 @@ export default async function handler(req, res) {
 
   // Проверка тела запроса
   if (!req.body) {
-    console.error('Error: Empty request body');
     return res.status(400).json({ error: 'Empty request body' });
   }
 
   try {
-    // Извлекаем данные
-    const { text, user_id, client_name, client_phone, attachments } = req.body;
-    
-    // Логируем полученные данные
-    console.log('Parsed parameters:', {
-      text,
-      user_id,
-      client_name,
+    // Обработка ТЕСТОВОГО запроса от Suvvy
+    if (req.body.event_type === 'test_request') {
+      console.log('Received test request from Suvvy');
+      return res.status(200).json({ 
+        success: true,
+        message: 'Test webhook received' 
+      });
+    }
+
+    // Обработка РЕАЛЬНОГО запроса от Tilda
+    const { 
+      text: messageText, 
+      user_id: userId, 
+      client_name, 
       client_phone,
-      attachments
-    });
+      attachments = []
+    } = req.body;
 
     // Проверка текста сообщения
-    if (!text || !text.trim()) {
+    if (!messageText || !messageText.trim()) {
       console.error('Validation Error: Missing message text');
       return res.status(400).json({ error: 'Message text is required' });
     }
@@ -54,22 +53,19 @@ export default async function handler(req, res) {
     const payload = {
       api_version: 1,
       message_id: `tilda-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
-      chat_id: user_id || 'tilda-user-' + Date.now(),
-      text: text,
+      chat_id: userId || 'tilda-user-' + Date.now(),
+      text: messageText,
       source: "Tilda Chat",
       message_sender: "customer",
       ...(client_name && { client_name }),
       ...(client_phone && { client_phone }),
-      ...(attachments && { attachments })
+      ...(attachments.length > 0 && { attachments })
     };
 
-    // Логируем подготовленный payload
-    console.log('Payload for Suvvy:', JSON.stringify(payload, null, 2));
+    console.log('Prepared payload for Suvvy:', JSON.stringify(payload, null, 2));
 
     // Отправляем в Suvvy
     const SUVVY_WEBHOOK_URL = 'https://api.suvvy.ai/api/webhook/custom/message';
-    console.log(`Sending to: ${SUVVY_WEBHOOK_URL}`);
-    
     const suvvyResponse = await fetch(SUVVY_WEBHOOK_URL, {
       method: 'POST',
       headers: {
@@ -80,11 +76,10 @@ export default async function handler(req, res) {
       timeout: 10000
     });
 
-    // Логируем ответ от Suvvy
+    // Обработка ответа
     const responseBody = await suvvyResponse.text();
-    console.log(`Suvvy response status: ${suvvyResponse.status}`);
-    console.log('Suvvy response body:', responseBody);
-
+    console.log(`Suvvy response: ${suvvyResponse.status} ${responseBody}`);
+    
     if (!suvvyResponse.ok) {
       return res.status(suvvyResponse.status).json({
         error: 'Suvvy API error',
@@ -92,11 +87,9 @@ export default async function handler(req, res) {
       });
     }
 
-    // Успешный ответ
     return res.status(200).json({ success: true });
 
   } catch (error) {
-    // Логируем ошибку
     console.error('Unhandled Exception:', error);
     return res.status(500).json({
       error: 'Internal Server Error',
