@@ -1,9 +1,12 @@
 import fetch from 'node-fetch';
 
+// Хранилище для сообщений бота (в памяти)
+const botMessages = new Map();
+
 export default async function handler(req, res) {
   // Настройка CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS, GET');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   
   if (req.method === 'OPTIONS') {
@@ -15,7 +18,44 @@ export default async function handler(req, res) {
   console.log('Headers:', JSON.stringify(req.headers));
   console.log('Body:', JSON.stringify(req.body));
 
+  // Обработка GET запросов для получения сообщений
+  if (req.method === 'GET') {
+    const userId = req.query.user_id;
+    if (!userId) return res.status(400).json({ error: 'Missing user_id' });
+    
+    const messages = botMessages.get(userId) || [];
+    botMessages.set(userId, []); // Очищаем после чтения
+    
+    return res.status(200).json({ messages });
+  }
+
   try {
+    // 1. Обработка сообщений от бота Suvvy
+    if (req.body.event_type === 'new_messages') {
+      console.log('Received bot message:', req.body);
+      
+      const chatId = req.body.chat_id;
+      const messages = req.body.new_messages
+        .filter(m => m.type === 'text')
+        .map(m => m.text);
+      
+      if (chatId && messages.length > 0) {
+        if (!botMessages.has(chatId)) {
+          botMessages.set(chatId, []);
+        }
+        botMessages.get(chatId).push(...messages);
+      }
+      
+      return res.status(200).json({ success: true });
+    }
+    
+    // 2. Обработка тестовых запросов от Suvvy
+    if (req.body.event_type === 'test_request') {
+      console.log('Processing test request');
+      return res.status(200).json({ success: true });
+    }
+    
+    // 3. Обработка сообщений от пользователя Tilda
     // Проверка токена
     const SUVVY_API_TOKEN = process.env.SUVVY_API_TOKEN;
     if (!SUVVY_API_TOKEN) {
@@ -44,15 +84,6 @@ export default async function handler(req, res) {
     else if (req.body.message?.text) {
       messageText = req.body.message.text;
       userId = req.body.user?.id || userId;
-    }
-    // Формат 4: Тестовый запрос от Suvvy
-    else if (req.body.event_type === 'test_request') {
-      return res.status(200).json({ success: true });
-    }
-    // Формат 5: Сообщение от бота Suvvy
-    else if (req.body.event_type === 'new_messages') {
-      console.log('Received bot message:', req.body);
-      return res.status(200).json({ success: true });
     }
     // Неизвестный формат
     else {
