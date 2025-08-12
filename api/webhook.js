@@ -2,75 +2,74 @@
 import fetch from 'node-fetch';
 
 export default async function handler(req, res) {
-  // Включаем подробное логирование для диагностики
-  console.log('--- NEW REQUEST RECEIVED ---');
-  console.log('Method:', req.method);
-  console.log('Headers:', JSON.stringify(req.headers));
-  console.log('Body:', JSON.stringify(req.body));
+  // Начало обработки запроса
+  console.log('\n===== NEW REQUEST RECEIVED =====');
+  console.log(`[${new Date().toISOString()}] Method: ${req.method}`);
   
-  // Разрешаем только POST-запросы
+  // Логируем заголовки
+  console.log('Headers:', JSON.stringify(req.headers, null, 2));
+  
+  // Логируем тело запроса
+  console.log('Raw request body:', JSON.stringify(req.body, null, 2));
+  
+  // Проверка метода
   if (req.method !== 'POST') {
-    console.error('Error: Only POST method is allowed');
-    res.setHeader('Allow', ['POST']);
-    return res.status(405).json({ 
-      error: 'Method Not Allowed',
-      message: 'Use POST method for this endpoint'
-    });
+    console.error('Error: Method not allowed');
+    return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
-  // Получаем токен из переменных окружения
+  // Проверка наличия токена
   const SUVVY_API_TOKEN = process.env.SUVVY_API_TOKEN;
-  const SUVVY_WEBHOOK_URL = 'https://api.suvvy.ai/api/webhook/custom/message';
-  
-  // Проверка наличия API-токена
   if (!SUVVY_API_TOKEN) {
     console.error('Critical Error: SUVVY_API_TOKEN is not set');
-    return res.status(500).json({ 
-      error: 'Server configuration error',
-      details: 'SUVVY_API_TOKEN environment variable is missing'
-    });
+    return res.status(500).json({ error: 'Server configuration error' });
   }
 
-  // Проверяем наличие тела запроса
+  // Проверка тела запроса
   if (!req.body) {
-    console.error('Error: Request body is empty');
-    return res.status(400).json({ 
-      error: 'Bad Request',
-      message: 'Request body is required'
-    });
+    console.error('Error: Empty request body');
+    return res.status(400).json({ error: 'Empty request body' });
   }
 
   try {
-    // Извлекаем данные с защитой от отсутствующих полей
-    const messageText = req.body.text || '';
-    const userId = req.body.user_id || 'tilda-user-' + Date.now();
+    // Извлекаем данные
+    const { text, user_id, client_name, client_phone, attachments } = req.body;
     
-    // Проверка наличия текста сообщения
-    if (!messageText.trim()) {
-      console.error('Validation Error: Message text is missing');
-      return res.status(400).json({ 
-        error: 'Bad Request',
-        message: 'Message text is required'
-      });
+    // Логируем полученные данные
+    console.log('Parsed parameters:', {
+      text,
+      user_id,
+      client_name,
+      client_phone,
+      attachments
+    });
+
+    // Проверка текста сообщения
+    if (!text || !text.trim()) {
+      console.error('Validation Error: Missing message text');
+      return res.status(400).json({ error: 'Message text is required' });
     }
 
-    // Формируем payload строго по документации Suvvy
+    // Формируем payload для Suvvy
     const payload = {
       api_version: 1,
       message_id: `tilda-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
-      chat_id: userId,
-      text: messageText,
+      chat_id: user_id || 'tilda-user-' + Date.now(),
+      text: text,
       source: "Tilda Chat",
       message_sender: "customer",
-      // Опциональные поля
-      ...(req.body.client_name && { client_name: req.body.client_name }),
-      ...(req.body.client_phone && { client_phone: req.body.client_phone }),
-      ...(req.body.attachments && { attachments: req.body.attachments })
+      ...(client_name && { client_name }),
+      ...(client_phone && { client_phone }),
+      ...(attachments && { attachments })
     };
 
-    console.log('Prepared payload for Suvvy:', JSON.stringify(payload, null, 2));
+    // Логируем подготовленный payload
+    console.log('Payload for Suvvy:', JSON.stringify(payload, null, 2));
 
-    // Отправляем запрос в Suvvy
+    // Отправляем в Suvvy
+    const SUVVY_WEBHOOK_URL = 'https://api.suvvy.ai/api/webhook/custom/message';
+    console.log(`Sending to: ${SUVVY_WEBHOOK_URL}`);
+    
     const suvvyResponse = await fetch(SUVVY_WEBHOOK_URL, {
       method: 'POST',
       headers: {
@@ -78,37 +77,30 @@ export default async function handler(req, res) {
         'Authorization': `Bearer ${SUVVY_API_TOKEN}`
       },
       body: JSON.stringify(payload),
-      timeout: 10000 // 10 секунд таймаут
+      timeout: 10000
     });
 
-    // Читаем ответ независимо от статуса
+    // Логируем ответ от Suvvy
     const responseBody = await suvvyResponse.text();
-    
-    console.log(`Suvvy API response: ${suvvyResponse.status} ${suvvyResponse.statusText}`);
-    console.log('Response body:', responseBody);
+    console.log(`Suvvy response status: ${suvvyResponse.status}`);
+    console.log('Suvvy response body:', responseBody);
 
     if (!suvvyResponse.ok) {
       return res.status(suvvyResponse.status).json({
         error: 'Suvvy API error',
-        status: suvvyResponse.status,
-        message: responseBody
+        details: responseBody
       });
     }
 
     // Успешный ответ
-    console.log('Successfully processed webhook');
-    return res.status(200).json({ 
-      success: true,
-      message: 'Webhook processed successfully'
-    });
+    return res.status(200).json({ success: true });
 
   } catch (error) {
-    // Подробное логирование ошибок
+    // Логируем ошибку
     console.error('Unhandled Exception:', error);
-    return res.status(500).json({ 
+    return res.status(500).json({
       error: 'Internal Server Error',
-      details: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      message: error.message
     });
   }
 }
